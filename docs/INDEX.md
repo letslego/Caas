@@ -2,7 +2,8 @@
 
 | Doc | Audience | Contents |
 |---|---|---|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Everyone | Layers, read/write paths, trust boundaries |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Everyone | Layers, planes, read/write paths, trust boundaries |
+| [NFR.md](NFR.md) | Architects / ops | Latency, durability, isolation, security targets |
 | [API.md](API.md) | API consumers | Full REST reference (memory + graph) |
 | [SDK.md](SDK.md) | App & agent authors | Python `CaasClient` + MCP server tools |
 | [MULTI_SCOPE.md](MULTI_SCOPE.md) | Product / security | Six scopes, ACLs, lifecycle |

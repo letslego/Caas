@@ -43,6 +43,7 @@ SDK against a live API: `python examples/sdk_mcp_demo.py`
 | `organization_assistant.py` | confidential policies | clearance-aware retrieve | vendor denied; multi-scope retrieve |
 | `assistants_promotion_flow.py` | personal → team → org | cross-scope context | promotion copies, no source mutate |
 | `http/assistants_curl.sh` | same via REST | same via REST | header identity (dev only) |
+| `assemble_demo.py` | working+profile+durable+episodes+knowledge | budgeted `assemble()` pack | timings_ms / NFR-oriented |
 
 ## Docs
 
