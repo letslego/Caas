@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+[project]
+name = "enterprise-context-service"
+version = "0.2.0"
+requires-python = ">=3.11"
+dependencies = ["fastapi>=0.115", "uvicorn>=0.30", "pydantic>=2"]
+[project.optional-dependencies]
+adk = ["google-adk>=1.16"]
+dev = ["pytest>=8"]
+[tool.setuptools.packages.find]
+where = ["src"]
+[project.scripts]
+caas-api = "caas.cli:main"
