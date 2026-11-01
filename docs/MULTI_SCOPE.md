@@ -2,6 +2,8 @@
 
 Six independently governed scopes: personal, team, project, organization, agent, task.
 
+See also: [INDEX](INDEX.md) · [ARCHITECTURE](ARCHITECTURE.md) · [API](API.md) · [SDK](SDK.md) · [examples](../examples/README.md).
+
 ## Identity and access
 The identity provider supplies tenant, subject, groups, clearance and permitted purposes. Scope owner controls grants. Other users require explicit user or group grants; personal scopes cannot be shared. Tenant isolation and classification checks are mandatory. No automatic inheritance from organization to project, team or personal scope.
 
