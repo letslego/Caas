@@ -22,7 +22,10 @@ Install with `pip install -e '.[dev]'`, run `uvicorn caas.multiscope_api:app --r
 export CAAS_DATABASE_URL=postgresql://caas:caas@127.0.0.1:5432/caas
 CAAS_UNSAFE_DEV_HEADERS=1 uvicorn caas.multiscope_api:app --host 127.0.0.1 --port 8080
 caas-worker --once   # project embeddings + graph edges
+CAAS_BASE_URL=http://127.0.0.1:8080 CAAS_TENANT=acme CAAS_SUBJECT=alice caas-mcp
 ```
+
+Python SDK: `from caas import CaasClient`. Temporal graph details: [GRAPH.md](GRAPH.md).
 
 ## Not production ready
 Replace demo header identity with verified OIDC/mTLS and delegated source credentials; add source-level ACL enforcement, real Glean/Databricks/Starburst connectors, audit retention, consent, erasure, and adversarial security tests. Run the app DB role as a non-owner (or FORCE RLS) so tenant policies cannot be bypassed.

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -10,17 +9,16 @@ from typing import Any
 import psycopg
 
 from .embeddings import Embedder, default_embedder, vector_literal
+from .graph import TemporalGraphMixin
 from .multiscope import SCOPES, LEVELS, Principal, Denied, Conflict
 from .postgres import connect, migrate, tenant_session
-
-ENTITY_RE = re.compile(r"\b([A-Z][a-zA-Z0-9_-]{1,63})\b")
 
 
 def utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class PostgresMemory:
+class PostgresMemory(TemporalGraphMixin):
     """Same behavioral surface as `caas.multiscope.Memory`, backed by Postgres."""
 
     def __init__(
@@ -398,145 +396,3 @@ class PostgresMemory:
             mid,
         )
 
-    # --- Temporal graph API -------------------------------------------------
-
-    def upsert_node(
-        self,
-        p: Principal,
-        label: str,
-        kind: str = "entity",
-        attrs: dict[str, Any] | None = None,
-        memory_id: str | None = None,
-    ) -> dict[str, Any]:
-        label = label.strip()
-        if not label:
-            raise ValueError("label required")
-        now = utc()
-        node_id = uuid.uuid5(uuid.NAMESPACE_URL, f"{p.tenant}:{kind}:{label.casefold()}").hex
-        with tenant_session(self.conn, p.tenant) as cur:
-            cur.execute(
-                """SELECT id FROM graph_nodes
-                   WHERE tenant=%s AND id=%s AND valid_to IS NULL""",
-                (p.tenant, node_id),
-            )
-            if cur.fetchone() is None:
-                cur.execute(
-                    """INSERT INTO graph_nodes
-                       (id, tenant, label, kind, attrs, valid_from, memory_id)
-                       VALUES (%s,%s,%s,%s,%s::jsonb,%s,%s)""",
-                    (
-                        node_id,
-                        p.tenant,
-                        label,
-                        kind,
-                        json.dumps(attrs or {}),
-                        now,
-                        memory_id,
-                    ),
-                )
-                self.log(cur, p, "graph.node", node_id)
-        return {"id": node_id, "label": label, "kind": kind}
-
-    def relate(
-        self,
-        p: Principal,
-        src_label: str,
-        relation: str,
-        dst_label: str,
-        *,
-        src_kind: str = "entity",
-        dst_kind: str = "entity",
-        attrs: dict[str, Any] | None = None,
-        memory_id: str | None = None,
-    ) -> dict[str, Any]:
-        src = self.upsert_node(p, src_label, src_kind, memory_id=memory_id)
-        dst = self.upsert_node(p, dst_label, dst_kind, memory_id=memory_id)
-        now = utc()
-        edge_id = uuid.uuid4().hex
-        with tenant_session(self.conn, p.tenant) as cur:
-            cur.execute(
-                """INSERT INTO graph_edges
-                   (id, tenant, src, dst, relation, attrs, valid_from, memory_id)
-                   VALUES (%s,%s,%s,%s,%s,%s::jsonb,%s,%s)""",
-                (
-                    edge_id,
-                    p.tenant,
-                    src["id"],
-                    dst["id"],
-                    relation,
-                    json.dumps(attrs or {}),
-                    now,
-                    memory_id,
-                ),
-            )
-            self.log(cur, p, "graph.edge", edge_id)
-        return {
-            "id": edge_id,
-            "src": src,
-            "relation": relation,
-            "dst": dst,
-        }
-
-    def neighbors(
-        self,
-        p: Principal,
-        label: str,
-        *,
-        relation: str | None = None,
-        at: datetime | None = None,
-        limit: int = 50,
-    ) -> list[dict[str, Any]]:
-        at = at or utc()
-        with tenant_session(self.conn, p.tenant) as cur:
-            cur.execute(
-                """SELECT n.id FROM graph_nodes n
-                   WHERE n.tenant=%s AND lower(n.label)=lower(%s)
-                     AND n.valid_from <= %s
-                     AND (n.valid_to IS NULL OR n.valid_to > %s)
-                   LIMIT 1""",
-                (p.tenant, label, at, at),
-            )
-            node = cur.fetchone()
-            if not node:
-                return []
-            if relation:
-                cur.execute(
-                    """SELECT e.id, e.relation, e.attrs, e.memory_id,
-                              sn.label AS src_label, dn.label AS dst_label
-                       FROM graph_edges e
-                       JOIN graph_nodes sn ON sn.id = e.src
-                       JOIN graph_nodes dn ON dn.id = e.dst
-                       WHERE e.tenant=%s AND (e.src=%s OR e.dst=%s)
-                         AND e.relation=%s
-                         AND e.valid_from <= %s
-                         AND (e.valid_to IS NULL OR e.valid_to > %s)
-                       LIMIT %s""",
-                    (p.tenant, node["id"], node["id"], relation, at, at, limit),
-                )
-            else:
-                cur.execute(
-                    """SELECT e.id, e.relation, e.attrs, e.memory_id,
-                              sn.label AS src_label, dn.label AS dst_label
-                       FROM graph_edges e
-                       JOIN graph_nodes sn ON sn.id = e.src
-                       JOIN graph_nodes dn ON dn.id = e.dst
-                       WHERE e.tenant=%s AND (e.src=%s OR e.dst=%s)
-                         AND e.valid_from <= %s
-                         AND (e.valid_to IS NULL OR e.valid_to > %s)
-                       LIMIT %s""",
-                    (p.tenant, node["id"], node["id"], at, at, limit),
-                )
-            return list(cur.fetchall())
-
-    def extract_entities(self, content: str) -> list[str]:
-        """Lightweight capitalized-token heuristic for demo projection."""
-        stop = {"The", "A", "An", "And", "Or", "But", "If", "When", "This", "That"}
-        seen: list[str] = []
-        for m in ENTITY_RE.finditer(content):
-            tok = m.group(1)
-            if tok in stop or tok in seen:
-                continue
-            seen.append(tok)
-            if len(seen) >= 8:
-                break
-        return seen

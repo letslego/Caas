@@ -29,18 +29,20 @@ CAAS_UNSAFE_DEV_HEADERS=1 uvicorn caas.multiscope_api:app --host 127.0.0.1 --por
 ```bash
 docker compose up -d postgres
 export CAAS_DATABASE_URL=postgresql://caas:caas@127.0.0.1:5432/caas
-pip install -e '.[dev,postgres]'
+pip install -e '.[dev,postgres,mcp]'
 pytest -q
 python examples/postgres_demo.py
 caas-worker --once
 CAAS_UNSAFE_DEV_HEADERS=1 caas-api --host 127.0.0.1 --port 8080
+# MCP stdio server (agents):
+CAAS_BASE_URL=http://127.0.0.1:8080 CAAS_TENANT=acme CAAS_SUBJECT=alice caas-mcp
 ```
 
-See [docs/POSTGRES.md](docs/POSTGRES.md) for schema, RLS, outbox, hybrid retrieve, and graph guidance.
+See [docs/POSTGRES.md](docs/POSTGRES.md), [docs/GRAPH.md](docs/GRAPH.md) (temporal graph, SDK, MCP).
 
-## Multi-scope assistants (v0.4)
+## Multi-scope assistants (v0.5)
 
-The `caas.multiscope` / `caas.pgmemory` modules implement personal, team, project, organization, agent and task memory with tenant isolation, explicit read/write/admin grants, purpose and classification controls, versioned updates, tombstone deletion, controlled promotion, provenance manifests, durable outbox indexing, pgvector recall, and a temporal property graph. See [architecture](docs/MULTI_SCOPE.md) and [examples](examples/).
+The `caas.multiscope` / `caas.pgmemory` modules implement personal, team, project, organization, agent and task memory with tenant isolation, explicit read/write/admin grants, purpose and classification controls, versioned updates, tombstone deletion, controlled promotion, provenance manifests, durable outbox indexing, pgvector recall, and a temporal property graph. Use `caas.CaasClient` (SDK) or `caas-mcp` (MCP server) from agents. See [architecture](docs/MULTI_SCOPE.md), [graph](docs/GRAPH.md), and [examples](examples/).
 
 The earlier `caas.api` remains a legacy single-purpose example. Use `caas.multiscope_api` for the new endpoints. Neither API is production hardened.
 

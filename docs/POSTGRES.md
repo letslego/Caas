@@ -13,7 +13,7 @@ The multi-scope service selects backends via URL:
 2. **Tenant RLS** — policies filter on `current_setting('caas.tenant')`. Application sessions call `set_config` per transaction. Use a non-owner app role (or `FORCE ROW LEVEL SECURITY`) in real deployments; table owners bypass RLS by default in Postgres.
 3. **Durable outbox** — every write/revise/delete enqueues `memory.upserted` / `memory.deleted`.
 4. **pgvector projection** — worker embeds content into `memory_embeddings` (`vector(384)`, HNSW, cosine).
-5. **Temporal graph** — `graph_nodes` / `graph_edges` with `valid_from` / `valid_to`. Worker projects co-mentions and `derived_from` on promotion; API exposes explicit `relate` / `neighbors`.
+5. **Temporal graph** — versioned `graph_nodes` / `graph_edges` with valid-time intervals. See [GRAPH.md](GRAPH.md) for SDK + MCP.
 6. **Hybrid retrieve** — lexical + vector ranking (`mode=hybrid|lexical|vector`).
 
 ## Local setup
@@ -35,7 +35,7 @@ Default embedder is deterministic feature hashing (`HashingEmbedder`). Swap via 
 
 ## Graph: do we need one?
 
-Yes, but **not a separate graph database** for this reference. Enterprise context needs typed relationships over time (promotion lineage, entity co-mention, explicit agent assertions). Storing a **temporal property graph in Postgres** keeps tenant RLS, backups, and transactions unified with memory and vectors. Reach for Neo4j/Neptune only when path queries or graph algorithms outgrow SQL.
+Yes — graph *semantics*, not a separate graph DB. See [GRAPH.md](GRAPH.md).
 
 ## Still out of scope
 

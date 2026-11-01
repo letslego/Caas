@@ -92,38 +92,60 @@ CREATE INDEX IF NOT EXISTS idx_memory_embeddings_scope
 CREATE INDEX IF NOT EXISTS idx_memory_embeddings_hnsw
   ON memory_embeddings USING hnsw (embedding vector_cosine_ops);
 
--- Temporal property graph (valid-time intervals; valid_to NULL = current).
-CREATE TABLE IF NOT EXISTS graph_nodes (
+-- Temporal property graph identity + versioned valid-time rows.
+-- Fresh installs get v2 tables. Existing v1 DBs are upgraded by schema_graph_v2.sql.
+CREATE TABLE IF NOT EXISTS graph_node_ids (
   id TEXT PRIMARY KEY,
   tenant TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS graph_nodes (
+  tenant TEXT NOT NULL,
+  id TEXT NOT NULL,
+  version INTEGER NOT NULL,
   label TEXT NOT NULL,
   kind TEXT NOT NULL,
   attrs JSONB NOT NULL DEFAULT '{}'::jsonb,
   valid_from TIMESTAMPTZ NOT NULL,
   valid_to TIMESTAMPTZ,
   memory_id TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_by TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (tenant, id, version)
 );
-CREATE INDEX IF NOT EXISTS idx_graph_nodes_tenant_label
+CREATE UNIQUE INDEX IF NOT EXISTS idx_graph_nodes_current_id
+  ON graph_nodes (tenant, id) WHERE valid_to IS NULL;
+CREATE INDEX IF NOT EXISTS idx_graph_nodes_tenant_label_v2
   ON graph_nodes (tenant, lower(label));
-CREATE INDEX IF NOT EXISTS idx_graph_nodes_current
-  ON graph_nodes (tenant, kind) WHERE valid_to IS NULL;
+CREATE INDEX IF NOT EXISTS idx_graph_nodes_asof
+  ON graph_nodes (tenant, id, valid_from, valid_to);
 
 CREATE TABLE IF NOT EXISTS graph_edges (
-  id TEXT PRIMARY KEY,
   tenant TEXT NOT NULL,
-  src TEXT NOT NULL REFERENCES graph_nodes(id),
-  dst TEXT NOT NULL REFERENCES graph_nodes(id),
+  id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  src TEXT NOT NULL,
+  dst TEXT NOT NULL,
   relation TEXT NOT NULL,
   attrs JSONB NOT NULL DEFAULT '{}'::jsonb,
   valid_from TIMESTAMPTZ NOT NULL,
   valid_to TIMESTAMPTZ,
   memory_id TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_by TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (tenant, id, version)
 );
-CREATE INDEX IF NOT EXISTS idx_graph_edges_src ON graph_edges (tenant, src) WHERE valid_to IS NULL;
-CREATE INDEX IF NOT EXISTS idx_graph_edges_dst ON graph_edges (tenant, dst) WHERE valid_to IS NULL;
-CREATE INDEX IF NOT EXISTS idx_graph_edges_rel ON graph_edges (tenant, relation) WHERE valid_to IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_graph_edges_current_id
+  ON graph_edges (tenant, id) WHERE valid_to IS NULL;
+CREATE INDEX IF NOT EXISTS idx_graph_edges_src_v2
+  ON graph_edges (tenant, src) WHERE valid_to IS NULL;
+CREATE INDEX IF NOT EXISTS idx_graph_edges_dst_v2
+  ON graph_edges (tenant, dst) WHERE valid_to IS NULL;
+CREATE INDEX IF NOT EXISTS idx_graph_edges_rel_v2
+  ON graph_edges (tenant, relation) WHERE valid_to IS NULL;
+CREATE INDEX IF NOT EXISTS idx_graph_edges_asof
+  ON graph_edges (tenant, src, dst, relation, valid_from, valid_to);
 
 -- Tenant RLS helpers. Application sets: SELECT set_config('caas.tenant', $1, true);
 ALTER TABLE scopes ENABLE ROW LEVEL SECURITY;
@@ -132,6 +154,7 @@ ALTER TABLE memories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit ENABLE ROW LEVEL SECURITY;
 ALTER TABLE outbox ENABLE ROW LEVEL SECURITY;
 ALTER TABLE memory_embeddings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE graph_node_ids ENABLE ROW LEVEL SECURITY;
 ALTER TABLE graph_nodes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE graph_edges ENABLE ROW LEVEL SECURITY;
 
@@ -159,6 +182,10 @@ BEGIN
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'caas_tenant_embeddings') THEN
     CREATE POLICY caas_tenant_embeddings ON memory_embeddings
+      USING (tenant = current_setting('caas.tenant', true));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'caas_tenant_node_ids') THEN
+    CREATE POLICY caas_tenant_node_ids ON graph_node_ids
       USING (tenant = current_setting('caas.tenant', true));
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'caas_tenant_nodes') THEN

@@ -84,7 +84,7 @@ def test_tenant_isolation_and_promotion_graph(mem):
     assert process_batch(mem) >= 1
 
     assert len(mem.search(b, "Apollo", [("team", "eng")])["items"]) == 1
-    edges = mem.neighbors(a, promoted["id"])
+    edges = mem.neighbors(a, promoted["id"], kind="memory")
     # derived_from should exist after worker projection
     assert any(e["relation"] == "derived_from" for e in edges)
 

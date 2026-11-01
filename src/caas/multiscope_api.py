@@ -2,15 +2,20 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from .factory import open_memory
 from .multiscope import Conflict, Denied, Principal
 
-app = FastAPI(title="CaaS multi-scope", version="0.4")
-memory = open_memory(os.getenv("CAAS_DATABASE_URL") or os.getenv("DATABASE_URL") or os.getenv("CAAS_SCOPED_DB", "scoped.db"))
+app = FastAPI(title="CaaS multi-scope", version="0.5")
+memory = open_memory(
+    os.getenv("CAAS_DATABASE_URL")
+    or os.getenv("DATABASE_URL")
+    or os.getenv("CAAS_SCOPED_DB", "scoped.db")
+)
 
 
 class Scope(BaseModel):
@@ -57,19 +62,65 @@ class Promote(BaseModel):
     purpose: str = "assistant"
 
 
+class UpsertNode(BaseModel):
+    label: str
+    kind: str = "entity"
+    attrs: dict = Field(default_factory=dict)
+    memory_id: str | None = None
+
+
 class Relate(BaseModel):
     src_label: str
     relation: str
     dst_label: str
     src_kind: str = "entity"
     dst_kind: str = "entity"
+    attrs: dict = Field(default_factory=dict)
     memory_id: str | None = None
+    replace: bool = True
+
+
+class Unrelate(BaseModel):
+    edge_id: str | None = None
+    src_label: str | None = None
+    relation: str | None = None
+    dst_label: str | None = None
+    src_kind: str = "entity"
+    dst_kind: str = "entity"
 
 
 class Neighbors(BaseModel):
     label: str
     relation: str | None = None
+    direction: str = Field(default="both", pattern="^(out|in|both)$")
+    kind: str = "entity"
+    at: datetime | None = None
     limit: int = 50
+
+
+class PathQuery(BaseModel):
+    src_label: str
+    dst_label: str
+    max_hops: int = 3
+    relation: str | None = None
+    src_kind: str = "entity"
+    dst_kind: str = "entity"
+    at: datetime | None = None
+
+
+class SubgraphQuery(BaseModel):
+    label: str
+    hops: int = 1
+    kind: str = "entity"
+    at: datetime | None = None
+    limit: int = 100
+
+
+class HistoryQuery(BaseModel):
+    node_id: str | None = None
+    edge_id: str | None = None
+    label: str | None = None
+    kind: str = "entity"
 
 
 def principal(
@@ -101,10 +152,14 @@ def run(fn):
         raise HTTPException(422, str(e))
 
 
+def require_graph():
+    if not hasattr(memory, "relate"):
+        raise HTTPException(501, "Graph requires PostgreSQL backend")
+
+
 @app.get("/healthz")
 def health():
-    backend = type(memory).__name__
-    return {"status": "ok", "backend": backend}
+    return {"status": "ok", "backend": type(memory).__name__, "version": "0.5"}
 
 
 @app.post("/v1/scopes")
@@ -130,7 +185,9 @@ def revoke(req: Grant, p: Principal = Depends(principal)):
 
 @app.post("/v1/memories")
 def write(req: Write, p: Principal = Depends(principal)):
-    return run(lambda: memory.write(p, **req.model_dump()))
+    payload = req.model_dump()
+    payload["sid"] = payload.pop("scope_id")
+    return run(lambda: memory.write(p, **payload))
 
 
 @app.get("/v1/memories/{mid}")
@@ -151,29 +208,71 @@ def promote(mid: str, req: Promote, p: Principal = Depends(principal)):
 @app.post("/v1/context:retrieve")
 def search(req: Search, p: Principal = Depends(principal)):
     kwargs = req.model_dump()
-    # SQLite Memory has no mode kwarg
     if not hasattr(memory, "embedder"):
         kwargs.pop("mode", None)
     return run(lambda: memory.search(p, **kwargs))
 
 
+@app.post("/v1/graph/nodes")
+def upsert_node(req: UpsertNode, p: Principal = Depends(principal)):
+    require_graph()
+    return run(lambda: memory.upsert_node(p, **req.model_dump()))
+
+
+@app.get("/v1/graph/nodes/{node_id}")
+def get_node(
+    node_id: str,
+    at: datetime | None = Query(None),
+    p: Principal = Depends(principal),
+):
+    require_graph()
+    return run(lambda: memory.get_node(p, node_id=node_id, at=at))
+
+
+@app.delete("/v1/graph/nodes/{node_id}")
+def close_node(node_id: str, p: Principal = Depends(principal)):
+    require_graph()
+    return run(lambda: memory.close_node(p, node_id))
+
+
 @app.post("/v1/graph/relate")
 def relate(req: Relate, p: Principal = Depends(principal)):
-    if not hasattr(memory, "relate"):
-        raise HTTPException(501, "Graph requires PostgreSQL backend")
+    require_graph()
     return run(lambda: memory.relate(p, **req.model_dump()))
+
+
+@app.post("/v1/graph/unrelate")
+def unrelate(req: Unrelate, p: Principal = Depends(principal)):
+    require_graph()
+    return run(lambda: memory.unrelate(p, **req.model_dump()))
 
 
 @app.post("/v1/graph/neighbors")
 def neighbors(req: Neighbors, p: Principal = Depends(principal)):
-    if not hasattr(memory, "neighbors"):
-        raise HTTPException(501, "Graph requires PostgreSQL backend")
-    return run(lambda: memory.neighbors(p, req.label, relation=req.relation, limit=req.limit))
+    require_graph()
+    return run(lambda: memory.neighbors(p, **req.model_dump()))
+
+
+@app.post("/v1/graph/path")
+def path(req: PathQuery, p: Principal = Depends(principal)):
+    require_graph()
+    return run(lambda: memory.path(p, **req.model_dump()))
+
+
+@app.post("/v1/graph/subgraph")
+def subgraph(req: SubgraphQuery, p: Principal = Depends(principal)):
+    require_graph()
+    return run(lambda: memory.subgraph(p, **req.model_dump()))
+
+
+@app.post("/v1/graph/history")
+def history(req: HistoryQuery, p: Principal = Depends(principal)):
+    require_graph()
+    return run(lambda: memory.history(p, **req.model_dump()))
 
 
 @app.post("/v1/admin/outbox:drain")
 def drain(p: Principal = Depends(principal)):
-    """Dev helper: process pending outbox projections synchronously."""
     if type(memory).__name__ != "PostgresMemory":
         raise HTTPException(501, "Outbox requires PostgreSQL backend")
     from .worker import process_batch

@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .embeddings import vector_literal
+from .graph import node_id_for
 from .pgmemory import PostgresMemory
 
 
@@ -42,8 +43,19 @@ def process_batch(memory: PostgresMemory, batch_size: int = 50) -> int:
 
 
 def _ensure_node(
-    cur, tenant: str, node_id: str, label: str, kind: str, memory_id: str, now: datetime
+    cur,
+    tenant: str,
+    node_id: str,
+    label: str,
+    kind: str,
+    memory_id: str,
+    now: datetime,
+    actor: str = "worker",
 ) -> None:
+    cur.execute(
+        "INSERT INTO graph_node_ids (id, tenant) VALUES (%s,%s) ON CONFLICT DO NOTHING",
+        (node_id, tenant),
+    )
     cur.execute(
         """SELECT id FROM graph_nodes
            WHERE tenant=%s AND id=%s AND valid_to IS NULL""",
@@ -52,10 +64,28 @@ def _ensure_node(
     if cur.fetchone() is None:
         cur.execute(
             """INSERT INTO graph_nodes
-               (id, tenant, label, kind, attrs, valid_from, memory_id)
-               VALUES (%s,%s,%s,%s,'{}'::jsonb,%s,%s)""",
-            (node_id, tenant, label, kind, now, memory_id),
+               (tenant, id, version, label, kind, attrs, valid_from, memory_id, created_by)
+               VALUES (%s,%s,1,%s,%s,'{}'::jsonb,%s,%s,%s)""",
+            (tenant, node_id, label, kind, now, memory_id, actor),
         )
+
+
+def _insert_edge(
+    cur,
+    tenant: str,
+    src: str,
+    dst: str,
+    relation: str,
+    memory_id: str,
+    now: datetime,
+    actor: str = "worker",
+) -> None:
+    cur.execute(
+        """INSERT INTO graph_edges
+           (tenant, id, version, src, dst, relation, attrs, valid_from, memory_id, created_by)
+           VALUES (%s,%s,1,%s,%s,%s,'{}'::jsonb,%s,%s,%s)""",
+        (tenant, uuid.uuid4().hex, src, dst, relation, now, memory_id, actor),
+    )
 
 
 def _handle(memory: PostgresMemory, cur, row: dict[str, Any]) -> None:
@@ -106,33 +136,19 @@ def _handle(memory: PostgresMemory, cur, row: dict[str, Any]) -> None:
     entities = memory.extract_entities(content)
     node_ids: list[str] = []
     for label in entities:
-        node_id = uuid.uuid5(
-            uuid.NAMESPACE_URL, f"{tenant}:entity:{label.casefold()}"
-        ).hex
-        node_ids.append(node_id)
-        _ensure_node(cur, tenant, node_id, label, "entity", mid, now)
+        nid = node_id_for(tenant, "entity", label)
+        node_ids.append(nid)
+        _ensure_node(cur, tenant, nid, label, "entity", mid, now)
 
     if payload.get("origin_id"):
-        src = uuid.uuid5(
-            uuid.NAMESPACE_URL, f"{tenant}:memory:{payload['origin_id']}"
-        ).hex
-        dst = uuid.uuid5(uuid.NAMESPACE_URL, f"{tenant}:memory:{mid}").hex
+        src = node_id_for(tenant, "memory", payload["origin_id"])
+        dst = node_id_for(tenant, "memory", mid)
         _ensure_node(cur, tenant, src, payload["origin_id"], "memory", mid, now)
         _ensure_node(cur, tenant, dst, mid, "memory", mid, now)
-        cur.execute(
-            """INSERT INTO graph_edges
-               (id, tenant, src, dst, relation, attrs, valid_from, memory_id)
-               VALUES (%s,%s,%s,%s,'derived_from','{}'::jsonb,%s,%s)""",
-            (uuid.uuid4().hex, tenant, dst, src, now, mid),
-        )
+        _insert_edge(cur, tenant, dst, src, "derived_from", mid, now)
 
     for a, b in zip(node_ids, node_ids[1:]):
-        cur.execute(
-            """INSERT INTO graph_edges
-               (id, tenant, src, dst, relation, attrs, valid_from, memory_id)
-               VALUES (%s,%s,%s,%s,'co_mentions','{}'::jsonb,%s,%s)""",
-            (uuid.uuid4().hex, tenant, a, b, now, mid),
-        )
+        _insert_edge(cur, tenant, a, b, "co_mentions", mid, now)
 
 
 def run_forever(url: str | None = None, poll_seconds: float = 1.0) -> None:

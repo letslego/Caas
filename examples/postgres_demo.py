@@ -43,5 +43,8 @@ print("outbox processed", process_batch(db))
 
 assert db.search(bob, "reviews", [("personal", "alice")])["items"] == []
 print("bob sees:", db.search(bob, "Thursday Apollo", [("team", team)], mode="hybrid")["context"])
-print("graph:", db.neighbors(alice, "Apollo"))
+db.relate(alice, "Apollo", "scheduled_on", "Thursdays")
+print("neighbors:", db.neighbors(alice, "Apollo", direction="out"))
+print("path:", db.path(alice, "Apollo", "Thursdays"))
+print("history versions:", len(db.history(alice, label="Apollo")))
 db.close()
