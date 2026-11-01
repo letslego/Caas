@@ -29,3 +29,19 @@ Reference foundation, **not production ready**. Production work includes enterpr
 ## Repository
 
 GitHub: https://github.com/letslego/Caas
+
+## Multi-scope assistants (v0.3 reference)
+
+The `caas.multiscope` module implements personal, team, project, organization, agent and task memory with tenant isolation, explicit read/write/admin grants, purpose and classification controls, versioned updates, tombstone deletion, controlled promotion, and provenance manifests. See [architecture](docs/MULTI_SCOPE.md) and [example](examples/multiscope_demo.py).
+
+```bash
+pip install -e '.[dev]'
+pytest -q
+python examples/multiscope_demo.py
+# LOCAL DEVELOPMENT ONLY; never expose this header-authenticated demo publicly:
+CAAS_UNSAFE_DEV_HEADERS=1 uvicorn caas.multiscope_api:app --host 127.0.0.1 --port 8080
+```
+
+The earlier `caas.api` remains a legacy single-purpose example. Use `caas.multiscope_api` for the new endpoints. Neither API is production hardened.
+
+**Important:** This is an implemented reference foundation, not a complete enterprise deployment. Real OIDC authorization, PostgreSQL/RLS, durable workers, vector and temporal graph stores, enterprise connectors, and ADK integration verification remain outstanding. Never commit credentials or enterprise data to this public repository.
