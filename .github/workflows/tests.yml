@@ -5,10 +5,26 @@ on:
 jobs:
   python:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: caas
+          POSTGRES_PASSWORD: caas
+          POSTGRES_DB: caas
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U caas -d caas"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      CAAS_DATABASE_URL: postgresql://caas:caas@127.0.0.1:5432/caas
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install -e '.[dev]'
+      - run: pip install -e '.[dev,postgres]'
       - run: pytest -q
