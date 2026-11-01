@@ -295,6 +295,72 @@ def caas_drain_outbox() -> str:
         return _err(e)
 
 
+@mcp.tool()
+def caas_append_turn(session_id: str, role: str, content: str) -> str:
+    """Append a hot working-memory turn for the session."""
+    try:
+        with _client() as c:
+            return _ok(c.append_turn(session_id, role, content))
+    except Exception as e:
+        return _err(e)
+
+
+@mcp.tool()
+def caas_set_profile_fact(key: str, value: str) -> str:
+    """Set a typed profile fact for the bound subject."""
+    try:
+        with _client() as c:
+            return _ok(c.set_profile_fact(key, value))
+    except Exception as e:
+        return _err(e)
+
+
+@mcp.tool()
+def caas_record_episode(kind: str, title: str, detail: str = "") -> str:
+    """Record an episodic event for the subject."""
+    try:
+        with _client() as c:
+            return _ok(c.record_episode(kind, title, detail))
+    except Exception as e:
+        return _err(e)
+
+
+@mcp.tool()
+def caas_ingest_document(title: str, content: str, source: str) -> str:
+    """Ingest a knowledge document (chunked)."""
+    try:
+        with _client() as c:
+            return _ok(c.ingest_document(title, content, source))
+    except Exception as e:
+        return _err(e)
+
+
+@mcp.tool()
+def caas_assemble_context(
+    session_id: str,
+    query: str,
+    scopes_json: str,
+    max_chars: int = 8000,
+) -> str:
+    """Budgeted multi-plane context pack (working+profile+durable+episodes+knowledge)."""
+    try:
+        scopes = [tuple(s) for s in json.loads(scopes_json)]
+        with _client() as c:
+            return _ok(c.assemble(session_id, query, scopes, max_chars=max_chars))
+    except Exception as e:
+        return _err(e)
+
+
+@mcp.tool()
+def caas_set_kill_switch(engaged: bool, reason: str = "") -> str:
+    """Engage or clear the tenant kill switch (host/admin)."""
+    try:
+        with _client() as c:
+            return _ok(c.set_kill_switch(engaged, reason))
+    except Exception as e:
+        return _err(e)
+
+
 def main() -> None:
     mcp.run(transport="stdio")
 

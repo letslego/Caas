@@ -7,7 +7,8 @@ Reference implementation of a governed enterprise context layer for agentic syst
 | Doc | Description |
 |---|---|
 | [docs/INDEX.md](docs/INDEX.md) | Documentation map |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layers, read/write paths, trust boundaries |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layers, planes, read/write paths, trust boundaries |
+| [docs/NFR.md](docs/NFR.md) | Latency, durability, isolation, security targets |
 | [docs/API.md](docs/API.md) | Full REST API reference |
 | [docs/SDK.md](docs/SDK.md) | Python SDK + MCP server |
 | [docs/MULTI_SCOPE.md](docs/MULTI_SCOPE.md) | Scopes, ACLs, lifecycle |

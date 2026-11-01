@@ -201,3 +201,33 @@ END $$;
 -- Table owners bypass RLS unless FORCE ROW LEVEL SECURITY is applied for the
 -- non-owner app role used in real deployments. The reference demo sets
 -- caas.tenant per transaction and still filters by tenant in SQL.
+
+-- Memlayer-aligned planes (profile / episodic / knowledge / operational)
+CREATE TABLE IF NOT EXISTS profile_facts (
+  tenant TEXT NOT NULL, subject TEXT NOT NULL, key TEXT NOT NULL,
+  type TEXT NOT NULL, value TEXT NOT NULL, revision INTEGER NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL, PRIMARY KEY (tenant, subject, key));
+CREATE TABLE IF NOT EXISTS profile_revisions (
+  tenant TEXT NOT NULL, subject TEXT NOT NULL, revision INTEGER NOT NULL,
+  PRIMARY KEY (tenant, subject));
+CREATE TABLE IF NOT EXISTS episodes (
+  id TEXT PRIMARY KEY, tenant TEXT NOT NULL, subject TEXT NOT NULL,
+  kind TEXT NOT NULL, title TEXT NOT NULL, detail TEXT NOT NULL,
+  at TIMESTAMPTZ NOT NULL, attrs TEXT NOT NULL DEFAULT '{}');
+CREATE INDEX IF NOT EXISTS idx_episodes_subj ON episodes (tenant, subject, at DESC);
+CREATE TABLE IF NOT EXISTS knowledge_documents (
+  id TEXT PRIMARY KEY, tenant TEXT NOT NULL, title TEXT NOT NULL,
+  source TEXT NOT NULL, visibility TEXT NOT NULL, owner TEXT,
+  created_at TIMESTAMPTZ NOT NULL);
+CREATE TABLE IF NOT EXISTS knowledge_chunks (
+  id TEXT PRIMARY KEY, document_id TEXT NOT NULL,
+  tenant TEXT NOT NULL, ordinal INTEGER NOT NULL, content TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_chunks_tenant ON knowledge_chunks (tenant, document_id);
+CREATE TABLE IF NOT EXISTS control_caps (
+  tenant TEXT NOT NULL, scope TEXT NOT NULL, scope_id TEXT NOT NULL,
+  max_steps INTEGER, max_spend_micros INTEGER,
+  steps INTEGER NOT NULL DEFAULT 0, spend_micros INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (tenant, scope, scope_id));
+CREATE TABLE IF NOT EXISTS kill_switches (
+  tenant TEXT PRIMARY KEY, engaged BOOLEAN NOT NULL, reason TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL, updated_by TEXT NOT NULL);

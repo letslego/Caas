@@ -1,92 +1,93 @@
-# Architecture layers
+# Architecture
 
-Enterprise Context-as-a-Service (CaaS) is a governed context layer for agentic systems. Google ADK (or another agent runtime) owns short-lived session compaction; CaaS owns durable scoped memory, retrieval, and provenance.
+Enterprise Context-as-a-Service (CaaS) is a governed context layer for agentic systems. Google ADK owns short-lived session compaction and persona UX; CaaS owns durable scoped memory, hot working memory, profile/episodic/knowledge planes, retrieval, temporal graph, and operational controls.
+
+NFRs (latency classes, durability, isolation, security): [NFR.md](NFR.md).
+
+## Layered model
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Assistants / Agents (personal, team, org)                  │
-│  ADK · custom agents · MCP clients                          │
-└─────────────┬───────────────────────────────┬───────────────┘
-              │ SDK / REST / MCP              │
-┌─────────────▼───────────────────────────────▼───────────────┐
-│  API layer — caas.multiscope_api                            │
-│  Identity headers (dev) or future OIDC middleware           │
-│  Request validation · error mapping (403/404/409/422)       │
-└─────────────┬───────────────────────────────────────────────┘
-              │
-┌─────────────▼───────────────────────────────────────────────┐
-│  Policy & scope layer — Principal, grants, classification   │
-│  Tenant isolation · purpose checks · clearance levels       │
-└─────────────┬───────────────────────────────────────────────┘
-              │
-┌─────────────▼───────────────────────────────────────────────┐
-│  Context compiler / memory service                          │
-│  Write · revise · promote · retrieve (budgeted + ranked)    │
-│  Manifest with citations / versions / scopes                │
-└──────┬──────────────────┬──────────────────┬────────────────┘
-       │                  │                  │
-       ▼                  ▼                  ▼
-┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐
-│ Durable      │  │ Vector       │  │ Temporal property    │
-│ memory       │  │ projection   │  │ graph                │
-│ (Postgres /  │  │ (pgvector)   │  │ (valid-time nodes/   │
-│  SQLite)     │  │ via outbox   │  │  edges)              │
-└──────────────┘  └──────────────┘  └──────────────────────┘
-       │
-       ▼  (planned)
-┌──────────────────────────────────────┐
-│ Federated sources: Glean / Databricks│
-│ / Starburst — ACL-aware connectors   │
-└──────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│ Agents / assistants (personal · team · org) · ADK · MCP clients      │
+└─────────────────────────────┬────────────────────────────────────────┘
+                              │ REST · SDK · MCP
+┌─────────────────────────────▼────────────────────────────────────────┐
+│ L1 Integration & identity                                            │
+│ Verified principal (OIDC/mTLS planned; dev headers local-only)       │
+└─────────────────────────────┬────────────────────────────────────────┘
+                              │
+┌─────────────────────────────▼────────────────────────────────────────┐
+│ L2 Policy & operational control                                      │
+│ Grants · clearance×classification · purpose · caps · kill switch     │
+└─────────────────────────────┬────────────────────────────────────────┘
+                              │
+┌─────────────────────────────▼────────────────────────────────────────┐
+│ L3 Context compiler — assemble()                                     │
+│ Budgeted pack: working → profile → durable scopes → episodes →       │
+│ knowledge → (optional) graph neighbors · timings_ms · manifest       │
+└───┬──────────┬──────────┬──────────┬──────────┬──────────┬───────────┘
+    │          │          │          │          │          │
+ Working   Profile   Durable    Episodic  Knowledge  Graph/Vectors
+ (hot)     (warm)    scoped     events    documents  (pgvector+TPG)
+    │          │          │          │          │          │
+    ▼          └──────────┴──────────┴──────────┴──────────┘
+ Redis*                                                    │
+ (opt.)                                         Postgres SoR (+ SQLite tests)
+                                                outbox workers
 ```
 
-## Layers (detail)
+\*Redis is optional. The reference ships an in-process CAS+TTL working store that implements the same interface.
 
-### 1. Assistant / agent layer
-Personal, team, and organization assistants call CaaS to **write** durable facts/decisions and **read** scoped context. They must never treat compacted chat as source-of-truth. Samples: `examples/personal_assistant.py`, `team_assistant.py`, `organization_assistant.py`.
+## Memory planes
 
-### 2. Integration surface
-| Surface | Module | Use when |
+| Plane | Holds | NFR class | Mutability |
+|---|---|---|---|
+| **Working** | Recent session turns / tool results | Hot, ephemeral | CAS append; TTL; max turns |
+| **Profile** | Typed per-user facts (`verbosity`, …) | Warm | Upsert / forget; revision bump |
+| **Durable scoped** | personal/team/project/org/agent/task memories | Durable | Versioned write/revise/promote |
+| **Episodic** | Timestamped events (decisions, tickets) | Warm/durable | Append + list by time |
+| **Knowledge** | Ingested documents / chunks | Durable + ANN | Ingest; hybrid search |
+| **Graph** | Temporal entities/relations | Durable eventual | Valid-time versions |
+| **Operational** | Audit, step/spend caps, kill switch | Control plane | Append audit; set caps; fail-closed |
+
+Multi-scope ACL (grants, no inheritance) continues to govern **durable scoped** reads/writes. Profile is private to `subject`. Working is keyed by `(tenant, subject, session)`. Knowledge/episodes are tenant-scoped with optional `user_id` restriction.
+
+## Control flows
+
+### assemble (read path for agents)
+
+1. Resolve principal; check kill switch (reads may still be allowed; writes blocked).  
+2. Load working turns for session (hot).  
+3. Load profile facts (warm).  
+4. Retrieve durable memories for requested scopes (authorize each).  
+5. List recent episodes for subject/tenant.  
+6. Search knowledge if `query` present.  
+7. Pack sections under `max_chars` with priority order above.  
+8. Return `{prompt, sections, manifest, timings_ms}`.
+
+### write paths
+
+| Intent | API | Notes |
 |---|---|---|
-| REST | `caas.multiscope_api` | Any HTTP client |
-| Python SDK | `caas.sdk.CaasClient` | Apps / services |
-| MCP | `caas.mcp_server` (`caas-mcp`) | Tool-using agents |
-| In-process | `caas.factory.open_memory` | Unit tests / local scripts |
-
-### 3. Identity & policy
-`Principal(tenant, subject, groups, clearance, purposes)` is resolved by middleware. Dev mode accepts `X-Verified-*` headers only when `CAAS_UNSAFE_DEV_HEADERS=1`. Authorization is **explicit grants** (no org→team→personal inheritance). Personal scopes are non-shareable.
-
-### 4. Memory service
-Creates scopes; writes versioned memories with provenance; revises with optimistic concurrency; tombstones deletes; promotes by **copy**; retrieves with lexical and/or vector ranking under a character budget; returns a **manifest**.
-
-### 5. Storage & projections
-- **System of record:** `memories` (+ `revisions`, `audit`)
-- **Outbox:** durable events for async workers
-- **pgvector:** `memory_embeddings` for semantic recall
-- **Graph:** versioned nodes/edges with `valid_from` / `valid_to`
-
-### 6. Federation (planned)
-Glean / Databricks / Starburst connectors enforce source ACLs and attach provenance into the same manifest shape.
-
-## Read path
-
-1. Authenticate principal  
-2. Authorize each requested `(kind, scope_id)` for `read`  
-3. Filter by purpose + clearance ≥ classification  
-4. Lexical and/or vector candidate generation  
-5. Rank, apply `limit` / `max_chars` budget  
-6. Return `{context, items, manifest}`
-
-## Write path
-
-1. Authenticate + authorize `write` on scope  
-2. Validate purpose, classification vs clearance and scope floor  
-3. Insert memory + revision + audit (+ outbox on Postgres)  
-4. Worker projects embeddings and graph edges asynchronously  
+| Session turn | `working.append` | Hot only |
+| Preference/fact | `profile.set` | Subject-owned |
+| Durable memory | existing `/v1/memories` | Outbox → vectors/graph |
+| Episode | `episodes.record` | Durable event |
+| Document | `knowledge.ingest` | Chunk + embed job |
+| Cap / kill | `ops.*` | Admin/host only |
 
 ## Trust boundaries
 
-- Tenant is a hard wall (SQL filters + optional RLS).  
-- Classification ladder: `public < internal < confidential < restricted`.  
-- Dev header identity is **not** a production control plane.  
-- Summaries must retain decisions, identifiers, numbers, open actions, provenance, and security scope ([COMPACTION.md](COMPACTION.md)).
+- Tenant is a hard wall.  
+- Never trust tenant/subject from model-controlled tool arguments without host binding.  
+- Classification: `public < internal < confidential < restricted`.  
+- Dev headers are not a production control plane.  
+- Compaction rules: [COMPACTION.md](COMPACTION.md).
+
+## Relationship to Memlayer
+
+CaaS absorbs Memlayer’s **planes** (working, profile, knowledge, episodic, operational) and **assemble** semantics under CaaS **governance** (scopes, grants, clearance, Postgres/pgvector, temporal graph, MCP). Chatbot persona/reflection UX remains in the ADK host (see Memlayer Atlas); CaaS stays the durable/enterprise context substrate.
+
+## Status
+
+Reference foundation. Production still needs real OIDC, forced RLS app roles, Redis HA, learned rerankers, federated connectors, and adversarial tests.

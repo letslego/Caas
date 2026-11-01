@@ -7,15 +7,17 @@ from datetime import datetime
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from .context_service import ContextService
 from .factory import open_memory
 from .multiscope import Conflict, Denied, Principal
 
-app = FastAPI(title="CaaS multi-scope", version="0.5")
+app = FastAPI(title="CaaS multi-scope", version="0.6")
 memory = open_memory(
     os.getenv("CAAS_DATABASE_URL")
     or os.getenv("DATABASE_URL")
     or os.getenv("CAAS_SCOPED_DB", "scoped.db")
 )
+context = ContextService(memory)
 
 
 class Scope(BaseModel):
@@ -157,9 +159,62 @@ def require_graph():
         raise HTTPException(501, "Graph requires PostgreSQL backend")
 
 
+class Turn(BaseModel):
+    session_id: str
+    role: str
+    content: str
+
+
+class ProfileFact(BaseModel):
+    key: str
+    value: str
+    type: str = "string"
+
+
+class EpisodeIn(BaseModel):
+    kind: str
+    title: str
+    detail: str = ""
+    attrs: dict = Field(default_factory=dict)
+
+
+class KnowledgeIn(BaseModel):
+    title: str
+    content: str
+    source: str
+    visibility: str = "tenant"
+
+
+class AssembleIn(BaseModel):
+    session_id: str
+    query: str
+    scopes: list[tuple[str, str]]
+    max_chars: int = 8000
+    purpose: str = "assistant"
+    mode: str = Field(default="hybrid", pattern="^(hybrid|lexical|vector)$")
+    include_operational: bool = False
+
+
+class CapsIn(BaseModel):
+    scope: str = "tenant"
+    scope_id: str | None = None
+    max_steps: int | None = None
+    max_spend_micros: int | None = None
+
+
+class KillIn(BaseModel):
+    engaged: bool
+    reason: str = ""
+
+
 @app.get("/healthz")
 def health():
-    return {"status": "ok", "backend": type(memory).__name__, "version": "0.5"}
+    return {
+        "status": "ok",
+        "backend": type(memory).__name__,
+        "version": "0.6",
+        "planes": ["working", "profile", "durable", "episodic", "knowledge", "graph", "operational"],
+    }
 
 
 @app.post("/v1/scopes")
@@ -278,3 +333,103 @@ def drain(p: Principal = Depends(principal)):
     from .worker import process_batch
 
     return {"processed": process_batch(memory)}
+
+
+@app.post("/v1/sessions/{session_id}/turns")
+def append_turn(session_id: str, req: Turn, p: Principal = Depends(principal)):
+    snap = run(
+        lambda: context.append_turn(p, session_id or req.session_id, req.role, req.content)
+    )
+    return {
+        "revision": snap.revision,
+        "turns": [{"id": t.id, "role": t.role, "content": t.content} for t in snap.turns],
+    }
+
+
+@app.get("/v1/sessions/{session_id}/memory")
+def get_working(session_id: str, p: Principal = Depends(principal)):
+    snap = context.get_working(p, session_id)
+    return {
+        "revision": snap.revision,
+        "turns": [{"id": t.id, "role": t.role, "content": t.content} for t in snap.turns],
+    }
+
+
+@app.delete("/v1/sessions/{session_id}")
+def clear_session(session_id: str, p: Principal = Depends(principal)):
+    return run(lambda: context.clear_working(p, session_id)) or {"ok": True}
+
+
+@app.put("/v1/users/{user_id}/facts/{key}")
+def put_fact(user_id: str, key: str, req: ProfileFact, p: Principal = Depends(principal)):
+    if user_id != p.subject:
+        raise HTTPException(403, "Forbidden")
+    return run(lambda: context.set_profile_fact(p, key, req.value, type_=req.type))
+
+
+@app.get("/v1/users/{user_id}/profile")
+def get_profile(user_id: str, p: Principal = Depends(principal)):
+    return run(lambda: context.get_profile(p, user_id))
+
+
+@app.delete("/v1/users/{user_id}/facts/{key}")
+def forget_fact(user_id: str, key: str, p: Principal = Depends(principal)):
+    if user_id != p.subject:
+        raise HTTPException(403, "Forbidden")
+    return run(lambda: context.forget_profile_fact(p, key))
+
+
+@app.post("/v1/episodes")
+def post_episode(req: EpisodeIn, p: Principal = Depends(principal)):
+    return run(lambda: context.record_episode(p, req.kind, req.title, req.detail, attrs=req.attrs))
+
+
+@app.get("/v1/episodes")
+def get_episodes(limit: int = 20, p: Principal = Depends(principal)):
+    return run(lambda: context.list_episodes(p, limit=limit))
+
+
+@app.post("/v1/knowledge/documents")
+def post_knowledge(req: KnowledgeIn, p: Principal = Depends(principal)):
+    return run(
+        lambda: context.ingest_document(
+            p, req.title, req.content, req.source, visibility=req.visibility
+        )
+    )
+
+
+class KnowledgeSearch(BaseModel):
+    query: str
+    limit: int = 8
+
+
+@app.post("/v1/knowledge/search")
+def knowledge_search(req: KnowledgeSearch, p: Principal = Depends(principal)):
+    return run(lambda: context.search_knowledge(p, req.query, limit=req.limit))
+
+
+@app.post("/v1/context:assemble")
+def assemble(req: AssembleIn, p: Principal = Depends(principal)):
+    return run(lambda: context.assemble(p, **req.model_dump()))
+
+
+@app.get("/v1/caps")
+def caps_get(p: Principal = Depends(principal)):
+    c = context.get_caps(p)
+    return c.__dict__
+
+
+@app.put("/v1/caps")
+def caps_put(req: CapsIn, p: Principal = Depends(principal)):
+    c = run(lambda: context.set_caps(p, **req.model_dump()))
+    return c.__dict__
+
+
+@app.put("/v1/kill-switch")
+def kill_put(req: KillIn, p: Principal = Depends(principal)):
+    return run(lambda: context.set_kill_switch(p, req.engaged, req.reason))
+
+
+@app.get("/v1/kill-switch")
+def kill_get(p: Principal = Depends(principal)):
+    return context.kill_switch_status(p)

@@ -319,3 +319,99 @@ class CaasClient:
 
     def health(self) -> dict:
         return self._request("GET", "/healthz")
+
+    # --- Memlayer-aligned planes -------------------------------------------
+
+    def append_turn(self, session_id: str, role: str, content: str) -> dict:
+        return self._request(
+            "POST",
+            f"/v1/sessions/{session_id}/turns",
+            json={"session_id": session_id, "role": role, "content": content},
+        )
+
+    def get_working(self, session_id: str) -> dict:
+        return self._request("GET", f"/v1/sessions/{session_id}/memory")
+
+    def clear_session(self, session_id: str) -> dict:
+        return self._request("DELETE", f"/v1/sessions/{session_id}")
+
+    def set_profile_fact(self, key: str, value: str, *, type: str = "string") -> dict:
+        return self._request(
+            "PUT",
+            f"/v1/users/{self.subject}/facts/{key}",
+            json={"key": key, "value": value, "type": type},
+        )
+
+    def get_profile(self) -> dict:
+        return self._request("GET", f"/v1/users/{self.subject}/profile")
+
+    def forget_profile_fact(self, key: str) -> dict:
+        return self._request("DELETE", f"/v1/users/{self.subject}/facts/{key}")
+
+    def record_episode(self, kind: str, title: str, detail: str = "", **attrs) -> dict:
+        return self._request(
+            "POST",
+            "/v1/episodes",
+            json={"kind": kind, "title": title, "detail": detail, "attrs": attrs},
+        )
+
+    def list_episodes(self, limit: int = 20) -> list:
+        return self._request("GET", "/v1/episodes", params={"limit": limit})
+
+    def ingest_document(
+        self, title: str, content: str, source: str, visibility: str = "tenant"
+    ) -> dict:
+        return self._request(
+            "POST",
+            "/v1/knowledge/documents",
+            json={
+                "title": title,
+                "content": content,
+                "source": source,
+                "visibility": visibility,
+            },
+        )
+
+    def search_knowledge(self, query: str, limit: int = 8) -> list:
+        return self._request(
+            "POST",
+            "/v1/knowledge/search",
+            json={"query": query, "limit": limit},
+        )
+
+    def assemble(
+        self,
+        session_id: str,
+        query: str,
+        scopes: Sequence[tuple[str, str]],
+        *,
+        max_chars: int = 8000,
+        mode: str = "hybrid",
+        include_operational: bool = False,
+    ) -> dict:
+        return self._request(
+            "POST",
+            "/v1/context:assemble",
+            json={
+                "session_id": session_id,
+                "query": query,
+                "scopes": [list(s) for s in scopes],
+                "max_chars": max_chars,
+                "mode": mode,
+                "include_operational": include_operational,
+            },
+        )
+
+    def set_caps(self, **kwargs: Any) -> dict:
+        return self._request("PUT", "/v1/caps", json=kwargs)
+
+    def get_caps(self) -> dict:
+        return self._request("GET", "/v1/caps")
+
+    def set_kill_switch(self, engaged: bool, reason: str = "") -> dict:
+        return self._request(
+            "PUT", "/v1/kill-switch", json={"engaged": engaged, "reason": reason}
+        )
+
+    def kill_switch(self) -> dict:
+        return self._request("GET", "/v1/kill-switch")

@@ -1,7 +1,9 @@
 # REST API reference
 
-Base app: `caas.multiscope_api:app` (v0.5).  
+Base app: `caas.multiscope_api:app` (v0.6).  
 Legacy app: `caas.api:app` (single-purpose; prefer multi-scope).
+
+Planes beyond durable scopes: **working**, **profile**, **episodic**, **knowledge**, **operational**, plus `POST /v1/context:assemble`. See [ARCHITECTURE.md](ARCHITECTURE.md) and [NFR.md](NFR.md).
 
 ## Auth (development only)
 
@@ -149,6 +151,50 @@ Bounded BFS: `{src_label, dst_label, max_hops?, relation?, …}`.
 `{label?|node_id?|edge_id?, kind?}` → all valid-time versions.
 
 ---
+
+## Working memory (hot)
+
+### `POST /v1/sessions/{session_id}/turns`
+`{"session_id","role","content"}` — CAS-append turn (roles: user|assistant|tool|system).
+
+### `GET /v1/sessions/{session_id}/memory`
+### `DELETE /v1/sessions/{session_id}`
+
+## Profile
+
+### `PUT /v1/users/{user_id}/facts/{key}` — `{key,value,type?}` (subject must match)
+### `GET /v1/users/{user_id}/profile`
+### `DELETE /v1/users/{user_id}/facts/{key}`
+
+## Episodes
+
+### `POST /v1/episodes` — `{kind,title,detail?,attrs?}`
+### `GET /v1/episodes?limit=20`
+
+## Knowledge
+
+### `POST /v1/knowledge/documents` — `{title,content,source,visibility?}`
+### `POST /v1/knowledge/search` — `{query,limit?}`
+
+## Assemble
+
+### `POST /v1/context:assemble`
+```json
+{
+  "session_id": "s1",
+  "query": "Orion Postgres",
+  "scopes": [["team","platform"]],
+  "max_chars": 8000,
+  "mode": "hybrid",
+  "include_operational": false
+}
+```
+Returns `{prompt, sections, manifest, timings_ms, chars_remaining}`.
+
+## Operational
+
+### `GET`/`PUT /v1/caps` — step/spend budgets
+### `GET`/`PUT /v1/kill-switch` — fail-closed writes when engaged
 
 ## Admin
 
