@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: caas
+      POSTGRES_PASSWORD: caas
+      POSTGRES_DB: caas
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U caas -d caas"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - caas_pg:/var/lib/postgresql/data
+
+volumes:
+  caas_pg:
